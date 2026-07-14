@@ -256,7 +256,7 @@ def _save_operational_information(
 ) -> Path:
     """Persist operational_information (ADM3) DataFrame as CSV."""
     out_file = output_dir / f"operational_information_{issue_date.isoformat()}_{timestamp}.csv"
-    operational_information_df.to_csv(out_file, index=False)
+    operational_information_df.to_cvs(out_file, index=False)
     logger.info("Operational information file written: %s", out_file)
     return out_file
 

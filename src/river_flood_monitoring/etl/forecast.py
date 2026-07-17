@@ -176,20 +176,29 @@ def _apply_tier_rules(
     member_list = sorted(set(int(m) for m in members))
     units: List[UnitDecision] = []
     fired_count = 0
+    ineligible_count = 0
 
     for unit_id, lead_map in prob_exceed.items():
+        unit_thresholds = thresholds.get(unit_id, {})
+        rp2_threshold = float(unit_thresholds.get(2, 0.0))
+        meets_oep_min = rp2_threshold >= float(decision.oep_min)
+        if not meets_oep_min:
+            ineligible_count += 1
+
         tier_results: List[TierDecision] = []
         for rule in decision.rules:
-            firing = [
-                lead
-                for lead, rp_prob in lead_map.items()
-                if rp_prob.get(rule.rp, 0.0) >= rule.p_thr
-            ]
-            fire_lead = _find_latest_persistent_lead(
-                firing,
-                min_lead=decision.min_lead,
-                persist_days=decision.persist_days,
-            )
+            fire_lead: Optional[int] = None
+            if meets_oep_min:
+                firing = [
+                    lead
+                    for lead, rp_prob in lead_map.items()
+                    if rp_prob.get(rule.rp, 0.0) >= rule.p_thr
+                ]
+                fire_lead = _find_latest_persistent_lead(
+                    firing,
+                    min_lead=decision.min_lead,
+                    persist_days=decision.persist_days,
+                )
             prob_at_fire: Optional[float] = None
             impact_population_at_fire: Optional[float] = None
             if fire_lead is not None:
@@ -218,7 +227,7 @@ def _apply_tier_rules(
                     fired=fire_lead is not None,
                     fire_lead=fire_lead,
                     probability_at_fire=prob_at_fire,
-                    impact_population_threshold=thresholds.get(unit_id, {}).get(rule.rp),
+                    impact_population_threshold=unit_thresholds.get(rule.rp),
                     impact_population_at_fire=impact_population_at_fire,
                 )
             )
@@ -234,9 +243,11 @@ def _apply_tier_rules(
         )
 
     logger.info(
-        "Tier evaluation complete: %d units, %d tier decisions fired",
+        "Tier evaluation complete: %d units, %d tier decisions fired, %d units below oep_min=%.0f",
         len(units),
         fired_count,
+        ineligible_count,
+        decision.oep_min,
     )
     return units
 

@@ -2,10 +2,14 @@
 
 run_name: "daily_flood_monitoring"
 
+target_adm2_pcodes:
+  # Target ADM2 provinces per basin
+  cagayan: ["PH02015"]     # Cagayan basin: Cagayan province
+  bicol: ["PH05017"]       # Bicol basin: Camarines Sur province
+
 ingest:
   # Path to the GloFAS ensemble NetCDF forecast files for this issue date.
   forecast_path_template: "data/bronze/glofas/forecast/dis_{ens_no}_{yyyymmdd}00.nc"
-  download_if_missing: false  # TODO: to remove
 
 inputs:
   # OEP risk curves (thresholds)
@@ -69,7 +73,3 @@ output:
   output_dir_template: "data/gold/trigger_decisions/{date}"
   # Log files: logs/{yyyy}/{mm}/<run_name>_<datetime>.txt
   log_dir_template: "logs/{yyyy}/{mm}"
-  # Target ADM2 provinces per basin
-  target_adm2_pcodes:
-    cagayan: ["PH02015"]     # Cagayan basin: Cagayan province
-    bicol: ["PH05017"]       # Bicol basin: Camarines Sur province

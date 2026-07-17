@@ -38,8 +38,6 @@ class IngestSettings:
     """Forecast file location settings for Extract"""
 
     forecast_path_template: str
-    download_if_missing: bool = False
-    downloader_command_template: Optional[str] = None
 
 
 @dataclass
@@ -128,7 +126,7 @@ def _normalize_target_adm2_pcodes(
 
     if not isinstance(raw_targets, dict):
         raise ValueError(
-            "output.target_adm2_pcodes must be a mapping of basin names to ADM2 pcode lists"
+            "target_adm2_pcodes must be a mapping of basin names to ADM2 pcode lists"
         )
 
     normalized: Dict[str, List[str]] = {}
@@ -159,13 +157,12 @@ def load_run_spec(path: str) -> PipelineRunSpec:
     detection_cfg = raw.get("detection") or {}
     output_cfg = raw.get("output") or {}
     decision_cfg = raw.get("decision") or {}
+    top_level_targets_cfg = raw.get("target_adm2_pcodes")
 
     ingest = None
     if ingest_cfg.get("forecast_path_template"):
         ingest = IngestSettings(
             forecast_path_template=str(ingest_cfg["forecast_path_template"]),
-            download_if_missing=bool(ingest_cfg.get("download_if_missing", False)),
-            downloader_command_template=ingest_cfg.get("downloader_command_template"),
         )
 
     inputs = None
@@ -185,7 +182,7 @@ def load_run_spec(path: str) -> PipelineRunSpec:
             output_dir_template=str(output_cfg["output_dir_template"]),
             log_dir_template=str(output_cfg["log_dir_template"]),
             target_adm2_pcodes=_normalize_target_adm2_pcodes(
-                output_cfg.get("target_adm2_pcodes")
+                top_level_targets_cfg
             ),
         )
 

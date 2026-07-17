@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import json
 import re
 
@@ -49,6 +49,28 @@ def extract(
     oep_template = str(run_spec.inputs.oep_json).strip()
     oep_path = Path(expand_template(oep_template, issue_date, basin=basin_name))
     thresholds, unit_metadata = _load_oep_thresholds(oep_path, run_spec.decision.oep_min)
+
+    if run_spec.output is None:
+        raise ValueError(
+            "Run spec must define output settings with top-level target_adm2_pcodes"
+        )
+
+    basin_key = basin_name.strip().lower()
+    target_adm2 = run_spec.output.target_adm2_pcodes.get(basin_key) or []
+    if not target_adm2:
+        raise ValueError(
+            f"No target_adm2_pcodes configured for basin '{basin_name}'. "
+            "Define top-level target_adm2_pcodes in the run spec."
+        )
+
+    adm3_to_adm2 = _load_adm3_to_adm2_mapping(Path(run_spec.detection.adm3_geojson))
+    thresholds, unit_metadata = _filter_units_by_target_adm2(
+        thresholds=thresholds,
+        unit_metadata=unit_metadata,
+        target_adm2_pcodes=set(target_adm2),
+        adm3_to_adm2=adm3_to_adm2,
+        basin_name=basin_name,
+    )
 
     det = run_spec.detection
 
@@ -103,11 +125,6 @@ def _resolve_forecast_path(
             return [str(candidate)]
 
     logger.warning("Forecast file(s) not found: %s", candidate)
-    if run_spec.ingest.download_if_missing:
-        raise NotImplementedError(
-            "download_if_missing=True but automatic download is not yet implemented. "
-            "Continuing without forecast."
-        )
     return None
 
 
@@ -117,8 +134,6 @@ def _load_oep_thresholds(
 ) -> tuple[Dict[str, Dict[int, float]], Dict[str, Dict[str, str]]]:
     """
     Load per-unit OEP impact thresholds from JSON.
-
-    Units whose RP2 threshold is below ``oep_min`` are excluded.
 
     Returns
     -------
@@ -150,18 +165,97 @@ def _load_oep_thresholds(
                 rp_map[rp] = float(oep_rl[idx])
             except (TypeError, ValueError):
                 continue
-        if rp_map.get(2, 0.0) >= oep_min:
-            thresholds[unit_id] = rp_map
-            unit_metadata[unit_id] = {
-                "level": str(rec.get("level", "") or "").strip(),
-                "name": str(rec.get("name", "") or "").strip(),
-                "pcode": str(pcode).strip(),
-            }
+        if not rp_map:
+            continue
+
+        thresholds[unit_id] = rp_map
+        unit_metadata[unit_id] = {
+            "level": str(rec.get("level", "") or "").strip(),
+            "name": str(rec.get("name", "") or "").strip(),
+            "pcode": str(pcode).strip(),
+        }
 
     logger.info(
-        "OEP thresholds loaded: %d qualifying units (from %d total, oep_min=%.0f)",
+        "OEP thresholds loaded: %d units with valid thresholds (from %d total, oep_min=%.0f)",
         len(thresholds),
         len(raw.get("units", [])),
         oep_min,
     )
     return thresholds, unit_metadata
+
+
+def _load_adm3_to_adm2_mapping(adm3_geojson_path: Path) -> Dict[str, str]:
+    """Load ADM3->ADM2 pcode mapping from admin areas GeoJSON."""
+    if not adm3_geojson_path.exists():
+        raise FileNotFoundError(f"ADM3 GeoJSON not found: {adm3_geojson_path}")
+
+    raw = json.loads(adm3_geojson_path.read_text(encoding="utf-8"))
+    features = raw.get("features") or []
+    mapping: Dict[str, str] = {}
+
+    for feature in features:
+        props = feature.get("properties") or {}
+        adm3_pcode = str(props.get("adm3_pcode", "") or "").strip()
+        adm2_pcode = str(props.get("adm2_pcode", "") or "").strip()
+        if adm3_pcode and adm2_pcode:
+            mapping[adm3_pcode] = adm2_pcode
+
+    if not mapping:
+        raise ValueError(
+            f"ADM3 GeoJSON has no ADM3/ADM2 mapping rows: {adm3_geojson_path}"
+        )
+
+    return mapping
+
+
+def _filter_units_by_target_adm2(
+    thresholds: Dict[str, Dict[int, float]],
+    unit_metadata: Dict[str, Dict[str, str]],
+    target_adm2_pcodes: Set[str],
+    adm3_to_adm2: Dict[str, str],
+    basin_name: str,
+) -> tuple[Dict[str, Dict[int, float]], Dict[str, Dict[str, str]]]:
+    """Filter units to selected ADM2 targets using admin-area parent mapping."""
+    kept_thresholds: Dict[str, Dict[int, float]] = {}
+    kept_unit_metadata: Dict[str, Dict[str, str]] = {}
+    missing_parent_map: List[str] = []
+
+    for unit_id, rp_map in thresholds.items():
+        meta = unit_metadata.get(unit_id) or {}
+        pcode = str(meta.get("pcode", "") or "").strip()
+        level = str(meta.get("level", "") or "").strip().upper()
+
+        if not pcode or not level:
+            continue
+
+        if level == "ADM2":
+            include = pcode in target_adm2_pcodes
+        elif level == "ADM3":
+            parent_adm2 = adm3_to_adm2.get(pcode)
+            if not parent_adm2:
+                missing_parent_map.append(pcode)
+                continue
+            include = parent_adm2 in target_adm2_pcodes
+        else:
+            continue
+
+        if include:
+            kept_thresholds[unit_id] = rp_map
+            kept_unit_metadata[unit_id] = meta
+
+    if missing_parent_map:
+        sample = ", ".join(sorted(set(missing_parent_map))[:10])
+        raise ValueError(
+            "Missing ADM3->ADM2 parent mapping for OEP units in basin "
+            f"'{basin_name}': {sample}"
+        )
+
+    logger.info(
+        "Target ADM2 filtering complete for basin '%s': %d -> %d units (targets=%d)",
+        basin_name,
+        len(thresholds),
+        len(kept_thresholds),
+        len(target_adm2_pcodes),
+    )
+
+    return kept_thresholds, kept_unit_metadata

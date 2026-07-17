@@ -80,6 +80,7 @@ def extract(
         "oep_path": oep_path,
         "thresholds": thresholds,
         "unit_metadata": unit_metadata,
+        "adm3_to_adm2": adm3_to_adm2,
         "evt_parquet": evt_parquet,
         "det": det,
     }

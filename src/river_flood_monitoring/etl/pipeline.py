@@ -204,6 +204,7 @@ def _write_extract_artifact(
         "oep_path": _to_optional_str(extracted.get("oep_path")),
         "thresholds": extracted.get("thresholds", {}),
         "unit_metadata": extracted.get("unit_metadata", {}),
+        "adm3_to_adm2": extracted.get("adm3_to_adm2", {}),
         "evt_parquet": _to_optional_str(extracted.get("evt_parquet")),
         "det": asdict(extracted["det"]),
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
@@ -244,6 +245,10 @@ def _read_extract_artifact(artifact_root: Path, basin_name: str) -> Dict[str, An
         "oep_path": Path(raw["oep_path"]),
         "thresholds": thresholds,
         "unit_metadata": raw.get("unit_metadata") or {},
+        "adm3_to_adm2": {
+            str(adm3): str(adm2)
+            for adm3, adm2 in (raw.get("adm3_to_adm2") or {}).items()
+        },
         "evt_parquet": Path(raw["evt_parquet"]),
         "det": det,
     }

@@ -76,6 +76,13 @@ def forecast(
     impacts_source = "detect_phase:" + ",".join(str(p) for p in extracted["forecast_paths"])
     logger.info("Detection mode complete — impact cube has %d units", len(impact_cube))
 
+    _aggregate_adm3_impacts_to_adm2(
+        impact_cube=impact_cube,
+        unit_metadata=extracted.get("unit_metadata", {}),
+        adm3_to_adm2=extracted.get("adm3_to_adm2", {}),
+        thresholds=extracted["thresholds"],
+    )
+
     prob_exceed = _compute_prob_exceed(impact_cube, extracted["thresholds"], members)
     units: List[UnitDecision] = _apply_tier_rules(
         prob_exceed,
@@ -141,6 +148,40 @@ def _find_latest_persistent_lead(
             if lead in window and window.issubset(firing_set):
                 return lead
     return None
+
+
+def _aggregate_adm3_impacts_to_adm2(
+    impact_cube: ImpactCube,
+    unit_metadata: Dict[str, Dict[str, str]],
+    adm3_to_adm2: Dict[str, str],
+    thresholds: Dict[str, Dict[int, float]],
+) -> None:
+    """Add ADM2 impact totals by summing child ADM3 impacts into parent units."""
+    aggregated_count = 0
+
+    for unit_id, by_lead in list(impact_cube.items()):
+        meta = unit_metadata.get(unit_id) or {}
+        if str(meta.get("level", "") or "").strip().upper() != "ADM3":
+            continue
+
+        adm3_pcode = str(meta.get("pcode", "") or "").strip()
+        parent_adm2_pcode = adm3_to_adm2.get(adm3_pcode)
+        parent_unit_id = build_unit_id("ADM2", parent_adm2_pcode)
+        if not parent_unit_id or parent_unit_id not in thresholds:
+            continue
+
+        for lead, by_member in by_lead.items():
+            parent_by_member = impact_cube.setdefault(parent_unit_id, {}).setdefault(lead, {})
+            for member, by_rp in by_member.items():
+                parent_by_rp = parent_by_member.setdefault(member, {})
+                for rp, value in by_rp.items():
+                    parent_by_rp[rp] = parent_by_rp.get(rp, 0.0) + float(value)
+        aggregated_count += 1
+
+    logger.info(
+        "ADM2 aggregation complete: %d ADM3 units rolled up into parent ADM2 impact totals",
+        aggregated_count,
+    )
 
 
 def _apply_tier_rules(

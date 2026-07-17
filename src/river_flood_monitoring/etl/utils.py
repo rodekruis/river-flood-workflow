@@ -16,6 +16,15 @@ DEFAULT_RULE_TIERS: Dict[str, Dict[str, Any]] = {
 }
 
 
+def build_unit_id(level: str, pcode: str) -> str:
+    """Build a normalized ETL unit identifier like ``ADM3::PH0201501``."""
+    level_norm = str(level or "").strip().upper()
+    pcode_norm = str(pcode or "").strip()
+    if level_norm not in {"ADM2", "ADM3"} or not pcode_norm:
+        return ""
+    return f"{level_norm}::{pcode_norm}"
+
+
 def expand_template(
     template: str,
     issue_date: date,

@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 
 from river_flood_monitoring.etl.run_spec import DetectionSettings, DecisionSettings, PipelineRunSpec
-from .utils import TierDecision, UnitDecision
+from .utils import TierDecision, UnitDecision, build_unit_id
 
 from river_flood_monitoring.logging import get_logger
 logger = get_logger(__name__)
@@ -1311,9 +1311,9 @@ def detect_flood_events(
     oep_raw = _json.loads(Path(oep_json_path).read_text(encoding="utf-8"))
     unit_names: List[str] = []
     for rec in oep_raw.get("units", []):
-        pcode = rec.get("pcode")
-        if pcode:
-            unit_names.append(_unit_key(str(pcode)))
+        unit_id = build_unit_id(rec.get("level", ""), rec.get("pcode", ""))
+        if unit_id:
+            unit_names.append(unit_id)
 
     # --- Open forecast source (.nc/.nc4) -----------------------------------
     if isinstance(forecast_paths, str):

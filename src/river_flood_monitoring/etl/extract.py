@@ -15,7 +15,7 @@ import re
 from river_flood_monitoring.config import BasinConfig
 from river_flood_monitoring.logging import get_logger
 from .run_spec import PipelineRunSpec
-from .utils import expand_template
+from .utils import build_unit_id, expand_template
 
 logger = get_logger(__name__)
 
@@ -138,7 +138,7 @@ def _load_oep_thresholds(
     Returns
     -------
     tuple
-        ``({unit_id: {rp: threshold_people}}, {unit_id: {level, name, pcode}})``
+        ``({LEVEL::pcode: {rp: threshold_people}}, {LEVEL::pcode: {level, name, pcode}})``
     """
     logger.info(
         "Loading OEP thresholds from %s (oep_min=%.0f)", oep_json_path, oep_min
@@ -155,7 +155,10 @@ def _load_oep_thresholds(
         pcode = rec.get("pcode")
         if not pcode:
             continue
-        unit_id = f"ADM3::{str(pcode)}"
+        level = str(rec.get("level", "") or "").strip()
+        unit_id = build_unit_id(level, str(pcode))
+        if not unit_id:
+            continue
         oep_rl = rec.get("oep_rl", [])
         rp_map: Dict[int, float] = {}
         for idx, rp in enumerate(rp_report):
@@ -170,7 +173,7 @@ def _load_oep_thresholds(
 
         thresholds[unit_id] = rp_map
         unit_metadata[unit_id] = {
-            "level": str(rec.get("level", "") or "").strip(),
+            "level": level,
             "name": str(rec.get("name", "") or "").strip(),
             "pcode": str(pcode).strip(),
         }

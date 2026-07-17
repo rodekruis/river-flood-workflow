@@ -870,7 +870,7 @@ def _read_forecast_snapshot(
             da = ds[forecast_source["var_name"]]
             data = da.isel({forecast_source["time_dim"]: t_idx}).values
         
-        return data[cell_lat_idx, cell_lon_idx].astype(float)
+        return data[cell_lat_idx, cell_lon_idx].astype(float) + 1000 # Add 1000 to mock discharge threshold exceedance
     except Exception as exc:
         logger.debug("Forecast read error for key %s: %s", key_data, exc)
         return None

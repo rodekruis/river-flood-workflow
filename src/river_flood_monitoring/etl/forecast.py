@@ -774,11 +774,11 @@ def _build_netcdf_index(
     file_paths: Sequence[Path],
     var_name: str,
     time_dim: str,
-    forecast_filename_example: Optional[str] = None,
+    member_dim: str,
 ) -> dict:
     """Index NetCDF files without loading all data into memory.
 
-    Returns mapping of (valid_time, member) → (file_path, time_idx).
+    Returns mapping of (valid_time, member) → (file_path, time_idx, member_idx).
     """
     import pandas as pd
     import xarray as xr
@@ -788,38 +788,17 @@ def _build_netcdf_index(
     steps: set = set()
     members: set = set()
 
-    def _member_token(ensemble: int) -> str:
-        if forecast_filename_example:
-            name = forecast_filename_example.lower()
-            replaced = re.sub(
-                r"([_-])00(?=[_-])",
-                lambda m: f"{m.group(1)}{ensemble:02d}",
-                name,
-                count=1,
-            )
-            if replaced != name:
-                return replaced
-        return f"dis_{ensemble:02d}_"
-
-    # Extract-style convention: one NetCDF file corresponds to one ensemble member
-    # and is named with a dis_XX_ token. Members without matching files are skipped.
-    member_file_pairs: List[Tuple[int, Path]] = []
-    sorted_paths = sorted(file_paths)
-    for ensemble in range(0, TOTAL_ENSEMBLE_MEMBERS):
-        token = _member_token(ensemble)
-        matched_path = next(
-            (p for p in sorted_paths if token in p.name.lower()),
-            None,
-        )
-        if matched_path is None:
-            continue
-        member_file_pairs.append((ensemble, matched_path))
-
-    for member, file_path in member_file_pairs:
+    # New-style convention: NetCDF contains all members in a dedicated member
+    # dimension. Index member/time directly from dimensions and coordinate values.
+    for file_path in sorted(file_paths):
         with xr.open_dataset(file_path) as ds:
-            times = pd.to_datetime(ds[time_dim].values)
+            da = ds[var_name]
+            if member_dim not in da.dims or time_dim not in da.dims:
+                continue
 
-            if len(times) == 0:
+            times = pd.to_datetime(ds[time_dim].values)
+            member_vals = np.asarray(ds[member_dim].values)
+            if len(times) == 0 or len(member_vals) == 0:
                 continue
 
             t0 = pd.Timestamp(times[0])
@@ -827,12 +806,17 @@ def _build_netcdf_index(
                 vt_ts = pd.Timestamp(vt)
                 step_h = int((vt_ts - t0).total_seconds() // 3600)
                 steps.add(step_h)
+                for m_idx, m_val in enumerate(member_vals):
+                    member = int(m_val)
+                    members.add(member)
+                    key = (vt_ts, member)
+                    msg_index[key] = (str(file_path), t_idx, m_idx)
+                    vt_lookup[(vt_ts, member)] = (key, None)
 
-                members.add(member)
-                key = (vt_ts, member)
-                # Store: file path and time index for on-demand reads.
-                msg_index[key] = (str(file_path), t_idx)
-                vt_lookup[(vt_ts, member)] = (key, None)
+    if not members:
+        raise RuntimeError(
+            f"No ensemble members indexed from NetCDF using member_dim='{member_dim}' and time_dim='{time_dim}'"
+        )
 
     return {
         "msg_index": msg_index,
@@ -871,10 +855,15 @@ def _open_forecast_source(
         lat_dim = "lat"
         lon_dim = "lon"
         time_dim = next((d for d in ("valid_time", "time") if d in da.dims), None)
+        member_dim = "member" if "member" in da.dims else None
 
         if lat_dim not in da.dims or lon_dim not in da.dims or time_dim is None:
             raise RuntimeError(
                 f"NetCDF variable '{var_name}' must include lat/lon/time dimensions"
+            )
+        if member_dim is None:
+            raise RuntimeError(
+                "NetCDF variable 'dis' must include the fixed ensemble member dimension 'member'"
             )
 
         lat_vals = np.asarray(ds[lat_dim].values)
@@ -889,14 +878,23 @@ def _open_forecast_source(
         forecast_paths,
         var_name,
         time_dim,
-        forecast_filename_example=forecast_filename_example,
+        member_dim=member_dim,
     )
     
     source = {
         "file_paths": [str(p) for p in forecast_paths],  # Keep as strings for serialization
         "var_name": var_name,
         "time_dim": time_dim,
+        "member_dim": member_dim,
     }
+
+    logger.info(
+        "Forecast source opened: %d files, time_dim='%s', member_dim='%s', indexed_members=%d",
+        len(forecast_paths),
+        time_dim,
+        member_dim or "<none>",
+        len(nc_index["members"]),
+    )
     return source, nc_index, lat_vals.astype(float), lon_vals.astype(float)
 
 
@@ -924,11 +922,15 @@ def _read_forecast_snapshot(
         if msg_num is None:
             return None
         
-        # On-demand file loading for memory efficiency
-        file_path, t_idx = msg_num
+        # On-demand file loading for memory efficiency.
+        file_path, t_idx, m_idx = msg_num
         with xr.open_dataset(file_path) as ds:
             da = ds[forecast_source["var_name"]]
-            data = da.isel({forecast_source["time_dim"]: t_idx}).values
+            indexers = {forecast_source["time_dim"]: t_idx}
+            member_dim = forecast_source.get("member_dim")
+            if member_dim and m_idx is not None and member_dim in da.dims:
+                indexers[member_dim] = m_idx
+            data = da.isel(indexers).values
         
         return data[cell_lat_idx, cell_lon_idx].astype(float)
     except Exception as exc:

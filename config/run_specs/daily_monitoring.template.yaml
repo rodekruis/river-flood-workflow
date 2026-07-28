@@ -8,8 +8,8 @@ target_adm2_pcodes:
   bicol: ["PH05017"]       # Bicol basin: Camarines Sur province
 
 ingest:
-  # Path to the GloFAS ensemble NetCDF forecast files for this issue date.
-  forecast_path_template: "data/bronze/glofas/forecast/dis_{ens_no}_{yyyymmdd}00.nc"
+  # Path to the GloFAS ensemble NetCDF forecast file for this issue date.
+  forecast_path_template: "data/bronze/glofas/forecast/glofas_areagrid_for_Phillippines_in_Phillippines_{yyyymmdd}00.nc"
 
 inputs:
   # OEP risk curves (thresholds)

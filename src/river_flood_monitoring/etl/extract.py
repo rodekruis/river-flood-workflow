@@ -10,7 +10,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 import json
-import re
 
 from river_flood_monitoring.config import BasinConfig
 from river_flood_monitoring.logging import get_logger
@@ -93,9 +92,10 @@ def _resolve_forecast_path(
     """
     Return local path(s) to the GloFAS ensemble NetCDF forecast files.
 
-    The path is derived from ``forecast_path_template``. If the template
-    contains ``{ens}`` or ``{ens_no}``, it is treated as a glob pattern and
-    all matching files are returned in sorted order.
+    The path is derived from ``forecast_path_template``.
+
+    Resolution strategy:
+    1) Try exact path expansion from the template.
 
     Returns ``None`` when no ingest settings are defined or no files are found.
     """
@@ -104,26 +104,12 @@ def _resolve_forecast_path(
         return None
 
     template = run_spec.ingest.forecast_path_template
-    has_ens_placeholder = "{ens}" in template or "{ens_no}" in template
-    if has_ens_placeholder:
-        template_for_lookup = template.replace("{ens}", "*").replace("{ens_no}", "*")
-    else:
-        # Support templates using a fixed member token like dis_00_YYYYMMDD00.nc.
-        template_for_lookup = re.sub(r"([_-])00(?=[_-])", r"\1*", template, count=1)
+    candidate = Path(expand_template(template, issue_date))
 
-    candidate = Path(expand_template(template_for_lookup, issue_date))
-
-    if has_ens_placeholder or template_for_lookup != template:
-        logger.info("Checking forecast file pattern: %s", candidate)
-        matched = sorted(p for p in candidate.parent.glob(candidate.name) if p.is_file())
-        if matched:
-            logger.info("Forecast files found: %d match(es)", len(matched))
-            return [str(p) for p in matched]
-    else:
-        logger.info("Checking forecast file: %s", candidate)
-        if candidate.exists():
-            logger.info("Forecast file found: %s", candidate)
-            return [str(candidate)]
+    logger.info("Checking forecast file: %s", candidate)
+    if candidate.exists():
+        logger.info("Forecast file found: %s", candidate)
+        return [str(candidate)]
 
     logger.warning("Forecast file(s) not found: %s", candidate)
     return None
